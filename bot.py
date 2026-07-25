@@ -626,7 +626,7 @@ async def cb_session_detail(callback: CallbackQuery):
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text=f"{close_text} сессию", callback_data=f"toggle_session:{session_id}")],
             [InlineKeyboardButton(text="Карточки дегустации", callback_data=f"admin_cards_session:{session_id}")],
-            [InlineKeyboardButton(text="Назад", callback_data="admin_all_sessions")],
+            [InlineKeyboardButton(text="Назад", callback_data="admin_menu")],
         ]),
     )
 
@@ -650,7 +650,7 @@ async def cb_toggle_session(callback: CallbackQuery):
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text=f"{close_text} сессию", callback_data=f"toggle_session:{session_id}")],
             [InlineKeyboardButton(text="Карточки дегустации", callback_data=f"admin_cards_session:{session_id}")],
-            [InlineKeyboardButton(text="Назад", callback_data="admin_all_sessions")],
+            [InlineKeyboardButton(text="Назад", callback_data="admin_menu")],
         ]),
     )
 
@@ -659,7 +659,8 @@ async def cb_toggle_session(callback: CallbackQuery):
 #  PARTICIPANT HANDLERS
 # ============================================================
 
-@participant_router.message(F.text == "/start")
+# /start на уровне dp — срабатывает из ЛЮБОГО FSM-состояния
+@dp.message(F.text == "/start")
 async def cmd_start(message: Message, state: FSMContext):
     await state.clear()
     text = (
@@ -677,10 +678,8 @@ async def cmd_start(message: Message, state: FSMContext):
 @participant_router.callback_query(F.data == "to_main")
 async def cb_to_main(callback: CallbackQuery, state: FSMContext):
     await state.clear()
-    if _is_admin(callback.from_user.id):
-        await callback.message.edit_text("Главное меню администратора", reply_markup=admin_menu_kb())
-    else:
-        await callback.message.edit_text("Главное меню\n\nВыберите действие:", reply_markup=main_menu_kb())
+    # Всегда показываем меню участника (кнопка так и называется)
+    await callback.message.edit_text("Главное меню\n\nВыберите действие:", reply_markup=main_menu_kb())
 
 
 # --- Регистрация ---
@@ -704,9 +703,10 @@ async def process_phone(message: Message, state: FSMContext):
     phone = message.contact.phone_number
     if not phone.startswith("+") and phone.startswith("8"):
         phone = "+7" + phone[1:]
-    await update_participant(message.from_user.id, phone=phone)
+    # Сохраняем телефон в FSM, а не в БД — запишем оба поля вместе в конце
+    await state.update_data(_reg_phone=phone)
     await state.set_state(ParticipantFSM.waiting_name)
-    await message.answer(f"Телефон сохранён: {phone}\n\nШаг 2: Отправьте ваше имя и фамилию.", reply_markup=back_kb("to_main"))
+    await message.answer(f"Телефон: {phone}\n\nШаг 2: Отправьте ваше имя и фамилию.")
 
 
 @participant_router.message(ParticipantFSM.waiting_phone)
@@ -719,9 +719,10 @@ async def process_phone_text(message: Message, state: FSMContext):
         phone = "+7" + phone[1:]
     elif not phone.startswith("+"):
         phone = "+" + phone
-    await update_participant(message.from_user.id, phone=phone)
+    # Сохраняем телефон в FSM, а не в БД
+    await state.update_data(_reg_phone=phone)
     await state.set_state(ParticipantFSM.waiting_name)
-    await message.answer(f"Телефон сохранён: {phone}\n\nШаг 2: Отправьте ваше имя и фамилию.", reply_markup=back_kb("to_main"))
+    await message.answer(f"Телефон: {phone}\n\nШаг 2: Отправьте ваше имя и фамилию.")
 
 
 @participant_router.message(ParticipantFSM.waiting_name)
@@ -730,9 +731,12 @@ async def process_name(message: Message, state: FSMContext):
     if len(name) < 2:
         await message.answer("Имя слишком короткое. Введите имя и фамилию.")
         return
-    await update_participant(message.from_user.id, name=name)
+    # Пишем телефон и имя в БД одновременно
+    data = await state.get_data()
+    phone = data.get("_reg_phone", "")
+    await update_participant(message.from_user.id, phone=phone, name=name)
     await state.clear()
-    await message.answer(f"Регистрация завершена!\n\nИмя: {name}\nВы можете войти в активную сессию и заполнить карточку дегустации.", reply_markup=main_menu_kb())
+    await message.answer(f"Регистрация завершена!\n\nИмя: {name}\nТелефон: {phone}\n\nВы можете войти в активную сессию и заполнить карточку дегустации.", reply_markup=main_menu_kb())
 
 
 # --- Вход в сессию ---
@@ -874,11 +878,12 @@ async def cb_card_skip(callback: CallbackQuery, state: FSMContext):
     await _advance(callback, state)
 
 
-@cards_router.message(CardFSM.filling)
+@cards_router.message(CardFSM.filling, F.text)
 async def process_text_field(message: Message, state: FSMContext):
     data = await state.get_data()
     fk = FIELDS[data["field_index"]][0]
     if _is_button_field(fk):
+        # Не даём продвинуться — повторяем подсказку с кнопками
         if fk == "score":
             await message.answer(f"Выберите оценку кнопками ниже.{SCORE_HINT}", reply_markup=score_kb())
         elif fk == "defects":
@@ -939,7 +944,8 @@ async def _advance(source, state: FSMContext):
             await _start_wine(msg, state, session_id, wines, is_blind, next_wine)
         else:
             await state.clear()
-            await msg.edit_text(f"Все {total_wines} карточек заполнены!\n\nСпасибо за подробную оценку.", reply_markup=card_session_menu_kb(session_id, total_wines))
+            # Используем answer (не edit) — последний шаг мог быть через текст
+            await msg.answer(f"Все {total_wines} карточек заполнены!\n\nСпасибо за подробную оценку.", reply_markup=card_session_menu_kb(session_id, total_wines))
 
 
 def _format_card(c: dict, is_blind: bool) -> list[str]:
@@ -1115,6 +1121,9 @@ async def api_my_cards(request: web.Request) -> web.Response:
     session_id = int(request.match_info["session_id"])
     participant_id = int(request.query["participant_id"])
     cards = await get_participant_cards(participant_id, session_id)
+    # Убираем чувствительные данные (tg_id) перед отправкой
+    for c in cards:
+        c.pop("tg_id", None)
     return web.json_response(cards)
 
 
@@ -1130,6 +1139,9 @@ async def api_all_cards(request: web.Request) -> web.Response:
     if body.get("user_id") not in ADMIN_IDS:
         return web.json_response({"error": "Forbidden"}, status=403)
     cards = await get_cards_by_session(session_id)
+    # Убираем чувствительные данные перед отправкой
+    for c in cards:
+        c.pop("tg_id", None)
     return web.json_response(cards)
 
 

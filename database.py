@@ -158,7 +158,9 @@ async def get_upcoming_sessions() -> list[dict]:
     pool = await get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch(
-            "SELECT * FROM sessions WHERE is_active = TRUE AND tasting_date >= CURRENT_DATE ORDER BY tasting_date"
+            "SELECT * FROM sessions WHERE is_active = TRUE"
+            " AND TO_DATE(tasting_date, 'DD.MM.YYYY') >= CURRENT_DATE"
+            " ORDER BY tasting_date"
         )
         return _rows_to_dicts(rows)
 
