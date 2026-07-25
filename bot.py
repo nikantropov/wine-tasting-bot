@@ -1235,13 +1235,45 @@ async def health_handler(request: web.Request) -> web.Response:
 
 
 async def webhook_handler(request: web.Request) -> web.Response:
-    update = Update.model_validate(await request.json())
-    await dp.feed_webhook_update(bot, update)
-    return web.Response(status=200)
+    try:
+        body = await request.json()
+        logger.info(f"Webhook received: {body.get('update_id', '?')}")
+        update = Update.model_validate(body)
+        await dp.feed_webhook_update(bot, update)
+        logger.info("Webhook processed OK")
+        return web.Response(status=200)
+    except Exception as e:
+        logger.error(f"Webhook error: {e}", exc_info=True)
+        return web.Response(status=500)
+
+
+async def debug_handler(request: web.Request) -> web.Response:
+    import traceback
+    info = {
+        "bot_token_set": bool(BOT_TOKEN),
+        "bot_token_prefix": BOT_TOKEN[:10] + "..." if BOT_TOKEN else "EMPTY",
+        "webhook_url": WEBHOOK_URL,
+        "webhook_path": WEBHOOK_PATH,
+        "bot_instance": bot is not None,
+        "router_count": len(dp.sub_routers),
+    }
+    if bot:
+        try:
+            wh = await bot.get_webhook_info()
+            info["webhook_info"] = {
+                "url": wh.url,
+                "last_error_date": wh.last_error_date,
+                "last_error_message": wh.last_error_message,
+                "pending_update_count": wh.pending_update_count,
+            }
+        except Exception as e:
+            info["webhook_info_error"] = str(e)
+    return web.json_response(info)
 
 
 app = web.Application()
 app.router.add_get("/health", health_handler)
+app.router.add_get("/debug", debug_handler)
 app.router.add_post(WEBHOOK_PATH, webhook_handler)
 app.router.add_get("/miniapp/", miniapp_handler)
 app.router.add_post("/api/auth", api_auth)
