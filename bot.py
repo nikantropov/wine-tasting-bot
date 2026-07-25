@@ -50,7 +50,15 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 bot: Bot | None = None
+
+admin_router = Router()
+participant_router = Router()
+cards_router = Router()
+
 dp = Dispatcher()
+dp.include_router(admin_router)
+dp.include_router(participant_router)
+dp.include_router(cards_router)
 
 # ============================================================
 #  MINI APP HTML (встроено, без папки static/)
@@ -417,13 +425,7 @@ init();
 </html>"""
 
 
-# ============================================================
-#  ROUTERS
-# ============================================================
-
-admin_router = Router()
-participant_router = Router()
-cards_router = Router()
+# Routers defined near dp (top of file)
 
 
 def _is_admin(user_id: int) -> bool:
@@ -661,8 +663,8 @@ async def cb_toggle_session(callback: CallbackQuery):
 #  PARTICIPANT HANDLERS
 # ============================================================
 
-# /start на уровне dp — срабатывает из ЛЮБОГО FSM-состояния
-@dp.message(F.text == "/start")
+# /start — срабатывает из ЛЮБОГО FSM-состояния
+@participant_router.message(F.text == "/start")
 async def cmd_start(message: Message, state: FSMContext):
     await state.clear()
     text = (
@@ -1189,16 +1191,32 @@ async def api_all_cards(request: web.Request) -> web.Response:
 
 async def on_startup(app):
     global bot
-    bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-    await init_db()
-    await init_cards_table()
-    logger.info("PostgreSQL initialized.")
-    await bot.set_webhook(url=WEBHOOK_URL, drop_pending_updates=True)
-    logger.info(f"Webhook set: {WEBHOOK_URL}")
-    scheduler = setup_scheduler()
-    scheduler.start()
-    app["scheduler"] = scheduler
-    logger.info("Scheduler started.")
+    try:
+        bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+        logger.info("Bot instance created.")
+    except Exception as e:
+        logger.error(f"Failed to create bot: {e}", exc_info=True)
+        raise
+    try:
+        await init_db()
+        await init_cards_table()
+        logger.info("PostgreSQL initialized.")
+    except Exception as e:
+        logger.error(f"DB init failed: {e}", exc_info=True)
+        raise
+    try:
+        await bot.set_webhook(url=WEBHOOK_URL, drop_pending_updates=True)
+        logger.info(f"Webhook set: {WEBHOOK_URL}")
+    except Exception as e:
+        logger.error(f"Webhook set failed: {e}", exc_info=True)
+        raise
+    try:
+        scheduler = setup_scheduler()
+        scheduler.start()
+        app["scheduler"] = scheduler
+        logger.info("Scheduler started.")
+    except Exception as e:
+        logger.error(f"Scheduler setup failed: {e}", exc_info=True)
 
 
 async def on_shutdown(app):
@@ -1221,10 +1239,6 @@ async def webhook_handler(request: web.Request) -> web.Response:
     await dp.feed_webhook_update(bot, update)
     return web.Response(status=200)
 
-
-dp.include_router(admin_router)
-dp.include_router(participant_router)
-dp.include_router(cards_router)
 
 app = web.Application()
 app.router.add_get("/health", health_handler)
