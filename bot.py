@@ -49,6 +49,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+bot: Bot | None = None
+dp = Dispatcher()
 
 # ============================================================
 #  MINI APP HTML (встроено, без папки static/)
@@ -229,7 +231,7 @@ async function init() {
 async function loadSessions() {
   state.screen = 'loading'; render();
   try {
-    const resp = await fetch(BASE + '/api/sessions');
+    const resp = await fetch(BASE + '/api/sessions?initData=' + encodeURIComponent(tg.initData));
     state.sessions = await resp.json();
     state.screen = 'sessions'; render();
   } catch (e) { state.screen = 'error'; render(); }
@@ -246,7 +248,7 @@ async function openSession(id) {
 }
 
 async function loadMyCards(sid) {
-  const resp = await fetch(BASE + '/api/sessions/' + sid + '/my-cards?participant_id=' + state.participantId);
+  const resp = await fetch(BASE + '/api/sessions/' + sid + '/my-cards?participant_id=' + state.participantId + '&initData=' + encodeURIComponent(tg.initData));
   state.myCards = await resp.json();
 }
 
@@ -862,9 +864,19 @@ async def cb_card_start(callback: CallbackQuery, state: FSMContext):
 
 @cards_router.callback_query(F.data.startswith("card_redo:"))
 async def cb_card_redo(callback: CallbackQuery, state: FSMContext):
+    registered = await is_participant_registered(callback.from_user.id)
+    if not registered:
+        await callback.answer("Сначала зарегистрируйтесь!", show_alert=True)
+        return
     session_id = int(callback.data.split(":")[1])
     session = await get_session_by_id(session_id)
+    if not session or not session["is_active"]:
+        await callback.answer("Сессия закрыта или не найдена.", show_alert=True)
+        return
     wines = await get_wines_by_session(session_id)
+    if not wines:
+        await callback.answer("Нет вин.", show_alert=True)
+        return
     await _start_wine(callback, state, session_id, wines, session["is_blind"], 1)
 
 
@@ -930,7 +942,8 @@ async def _advance(source, state: FSMContext):
     if wine_id:
         for fk, _ in FIELDS:
             val = card.get(fk, "")
-            if fk == "score" and val == "":
+            # Пустую оценку не сохраняем — нарушает CHECK(score BETWEEN 1 AND 10)
+            if fk == "score" and (not val or val == ""):
                 continue
             await update_card_field(participant["id"], wine_id, fk, val if val else None)
     next_field = field_index + 1
@@ -983,16 +996,9 @@ async def cb_card_my(callback: CallbackQuery):
 
 
 @cards_router.callback_query(F.data == "admin_cards")
-@cards_router.callback_query(F.data.startswith("admin_cards:"))
 async def cb_admin_cards(callback: CallbackQuery):
     if not _is_admin(callback.from_user.id):
         await callback.answer("Нет доступа", show_alert=True)
-        return
-    if callback.data.startswith("admin_cards_session:"):
-        session_id = int(callback.data.split(":")[1])
-        session = await get_session_by_id(session_id)
-        wines = await get_wines_by_session(session_id)
-        await callback.message.edit_text(f"{session['title']} ({session['tasting_date']})\nВин: {len(wines)}\n\nВыберите действие:", reply_markup=admin_cards_menu_kb(session_id))
         return
     sessions = await get_all_sessions()
     if not sessions:
@@ -1005,6 +1011,20 @@ async def cb_admin_cards(callback: CallbackQuery):
                 sid = btn.callback_data.split(":")[1]
                 btn.callback_data = f"admin_cards_session:{sid}"
     await callback.message.edit_text("Карточки дегустации\n\nВыберите сессию:", reply_markup=kb)
+
+
+@cards_router.callback_query(F.data.startswith("admin_cards_session:"))
+async def cb_admin_cards_session(callback: CallbackQuery):
+    if not _is_admin(callback.from_user.id):
+        await callback.answer("Нет доступа", show_alert=True)
+        return
+    session_id = int(callback.data.split(":")[1])
+    session = await get_session_by_id(session_id)
+    if not session:
+        await callback.answer("Сессия не найдена", show_alert=True)
+        return
+    wines = await get_wines_by_session(session_id)
+    await callback.message.edit_text(f"{session['title']} ({session['tasting_date']})\nВин: {len(wines)}\n\nВыберите действие:", reply_markup=admin_cards_menu_kb(session_id))
 
 
 @cards_router.callback_query(F.data.startswith("admin_cards_summary:"))
@@ -1109,7 +1129,18 @@ async def api_auth(request: web.Request) -> web.Response:
     return web.json_response({"user_id": user["id"], "name": user.get("first_name", ""), "is_admin": is_admin, "participant_id": participant["id"]})
 
 
+async def _api_get_user(request: web.Request) -> dict | None:
+    """Извлекает user из query-параметра initData в API GET-запросах."""
+    init_data = request.query.get("initData", "")
+    if not init_data:
+        return None
+    return _validate_init_data(init_data)
+
+
 async def api_sessions(request: web.Request) -> web.Response:
+    user = await _api_get_user(request)
+    if not user:
+        return web.json_response({"error": "Unauthorized"}, status=401)
     sessions = await get_all_sessions()
     for s in sessions:
         wines = await get_wines_by_session(s["id"])
@@ -1118,8 +1149,15 @@ async def api_sessions(request: web.Request) -> web.Response:
 
 
 async def api_my_cards(request: web.Request) -> web.Response:
+    user = await _api_get_user(request)
+    if not user:
+        return web.json_response({"error": "Unauthorized"}, status=401)
     session_id = int(request.match_info["session_id"])
     participant_id = int(request.query["participant_id"])
+    # Пользователь может смотреть только свои карточки
+    participant = await get_or_create_participant(user["id"])
+    if participant["id"] != participant_id:
+        return web.json_response({"error": "Forbidden"}, status=403)
     cards = await get_participant_cards(participant_id, session_id)
     # Убираем чувствительные данные (tg_id) перед отправкой
     for c in cards:
@@ -1150,6 +1188,8 @@ async def api_all_cards(request: web.Request) -> web.Response:
 # ============================================================
 
 async def on_startup(app):
+    global bot
+    bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     await init_db()
     await init_cards_table()
     logger.info("PostgreSQL initialized.")
@@ -1165,9 +1205,10 @@ async def on_shutdown(app):
     scheduler = app.get("scheduler")
     if scheduler:
         scheduler.shutdown()
-    await bot.delete_webhook()
+    if bot:
+        await bot.delete_webhook()
+        await bot.session.close()
     await close_pool()
-    await bot.session.close()
     logger.info("Shutdown complete.")
 
 
@@ -1181,8 +1222,6 @@ async def webhook_handler(request: web.Request) -> web.Response:
     return web.Response(status=200)
 
 
-bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-dp = Dispatcher()
 dp.include_router(admin_router)
 dp.include_router(participant_router)
 dp.include_router(cards_router)

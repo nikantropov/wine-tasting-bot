@@ -12,11 +12,11 @@ thin_border = Border(
 )
 
 
-def _header_style(ws, cols):
+def _header_style(ws, cols, row=1):
     fill = PatternFill(start_color='4F4F4F', end_color='4F4F4F', fill_type='solid')
     font = Font(name='Arial', size=11, bold=True, color='FFFFFF')
     for c in range(1, cols + 1):
-        cell = ws.cell(row=1, column=c)
+        cell = ws.cell(row=row, column=c)
         cell.fill = fill
         cell.font = font
         cell.alignment = Alignment(horizontal='center', vertical='center')
@@ -135,7 +135,7 @@ async def export_cards_excel(session_id: int) -> str:
                            'Дефекты', 'Впечатление', 'Комментарий', 'Оценка']
             for j, h in enumerate(sub_headers, 1):
                 ws3.cell(row=row_idx, column=j, value=h)
-            _header_style(ws3, len(sub_headers))
+            _header_style(ws3, len(sub_headers), row=row_idx)
             row_idx += 1
 
             for c2 in cards:
