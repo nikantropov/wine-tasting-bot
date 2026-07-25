@@ -1248,7 +1248,6 @@ async def webhook_handler(request: web.Request) -> web.Response:
 
 
 async def debug_handler(request: web.Request) -> web.Response:
-    import traceback
     info = {
         "bot_token_set": bool(BOT_TOKEN),
         "bot_token_prefix": BOT_TOKEN[:10] + "..." if BOT_TOKEN else "EMPTY",
@@ -1271,9 +1270,31 @@ async def debug_handler(request: web.Request) -> web.Response:
     return web.json_response(info)
 
 
+async def set_webhook_handler(request: web.Request) -> web.Response:
+    """Ручная установка вебхука — вызови GET /set-webhook"""
+    if not bot:
+        return web.json_response({"error": "bot not initialized"}, status=500)
+    try:
+        result = await bot.set_webhook(url=WEBHOOK_URL, drop_pending_updates=True)
+        wh = await bot.get_webhook_info()
+        return web.json_response({
+            "set_result": result,
+            "webhook_url_set": WEBHOOK_URL,
+            "webhook_info": {
+                "url": wh.url,
+                "last_error_date": wh.last_error_date,
+                "last_error_message": wh.last_error_message,
+                "pending_update_count": wh.pending_update_count,
+            },
+        })
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+
+
 app = web.Application()
 app.router.add_get("/health", health_handler)
 app.router.add_get("/debug", debug_handler)
+app.router.add_get("/set-webhook", set_webhook_handler)
 app.router.add_post(WEBHOOK_PATH, webhook_handler)
 app.router.add_get("/miniapp/", miniapp_handler)
 app.router.add_post("/api/auth", api_auth)
