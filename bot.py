@@ -735,9 +735,10 @@ async def process_name(message: Message, state: FSMContext):
     if len(name) < 2:
         await message.answer("Имя слишком короткое. Введите имя и фамилию.")
         return
-    # Пишем телефон и имя в БД одновременно
     data = await state.get_data()
     phone = data.get("_reg_phone", "")
+    # Сначала создаём строку участника (если нет), затем обновляем
+    await get_or_create_participant(message.from_user.id)
     await update_participant(message.from_user.id, phone=phone, name=name)
     await state.clear()
     await message.answer(f"Регистрация завершена!\n\nИмя: {name}\nТелефон: {phone}\n\nВы можете войти в активную сессию и заполнить карточку дегустации.", reply_markup=main_menu_kb())
