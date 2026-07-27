@@ -1232,6 +1232,15 @@ async def on_shutdown(app):
 
 
 async def health_handler(request: web.Request) -> web.Response:
+    # Каждый health-check (каждые ~30 сек) проверяем и восстанавливаем вебхук
+    if bot:
+        try:
+            wh = await bot.get_webhook_info()
+            if not wh.url:
+                await bot.set_webhook(url=WEBHOOK_URL, drop_pending_updates=False)
+                logger.info(f"Webhook auto-restored via health check")
+        except Exception as e:
+            logger.error(f"Health webhook check failed: {e}")
     return web.Response(text="OK", status=200)
 
 
