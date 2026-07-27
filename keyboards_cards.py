@@ -1,8 +1,6 @@
 """Клавиатуры для карточек дегустации."""
 
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
-
-from config import MINIAPP_URL
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 
 SCORE_HINT = (
@@ -66,10 +64,6 @@ def card_session_menu_kb(session_id: int, wines_count: int) -> InlineKeyboardMar
         [InlineKeyboardButton(
             text="📊 Мои карточки",
             callback_data=f"card_my:{session_id}",
-        )],
-        [InlineKeyboardButton(
-            text="🔍 Просмотр (Mini App)",
-            web_app=WebAppInfo(url=MINIAPP_URL),
         )],
         [InlineKeyboardButton(text="Назад", callback_data="to_main")],
     ])

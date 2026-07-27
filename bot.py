@@ -1,10 +1,6 @@
 import os
-import json
-import hashlib
-import hmac as hmac_module
 import logging
 import sys
-from urllib.parse import parse_qs
 
 from aiohttp import web
 from aiogram import Router, F, Bot, Dispatcher
@@ -60,369 +56,7 @@ dp.include_router(admin_router)
 dp.include_router(participant_router)
 dp.include_router(cards_router)
 
-# ============================================================
-#  MINI APP HTML (встроено, без папки static/)
-# ============================================================
 
-MINIAPP_HTML = r"""<!DOCTYPE html>
-<html lang="ru">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-  <title>Дегустация вин</title>
-  <script src="https://telegram.org/js/telegram-web-app.js"></script>
-  <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-    :root {
-      --bg:          var(--tg-bg-color, #fff);
-      --bg2:         var(--tg-secondary-bg-color, #f0f0f0);
-      --text:        var(--tg-text-color, #222);
-      --text2:       var(--tg-hint-color, #999);
-      --accent:      var(--tg-theme-button-color, #3390ec);
-      --accent-text: var(--tg-theme-button-text-color, #fff);
-      --danger:      #e53935;
-      --success:     #43a047;
-      --warning:     #fb8c00;
-      --gold:        #f9a825;
-      --radius:      12px;
-      --shadow:      0 1px 3px rgba(0,0,0,.08);
-    }
-
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: var(--bg);
-      color: var(--text);
-      font-size: 15px;
-      line-height: 1.5;
-      min-height: 100vh;
-      padding-bottom: 20px;
-    }
-
-    .header {
-      position: sticky; top: 0; z-index: 10;
-      background: var(--bg2);
-      padding: 14px 16px;
-      display: flex; align-items: center; gap: 12px;
-      border-bottom: 1px solid rgba(0,0,0,.06);
-    }
-    .header h1 { font-size: 18px; font-weight: 600; flex: 1; }
-    .back-btn {
-      width: 32px; height: 32px; border-radius: 50%;
-      background: var(--accent); color: var(--accent-text);
-      border: none; font-size: 18px; cursor: pointer;
-      display: flex; align-items: center; justify-content: center;
-    }
-
-    .center-msg {
-      display: flex; flex-direction: column;
-      align-items: center; justify-content: center;
-      padding: 60px 24px; color: var(--text2); text-align: center;
-    }
-    .center-msg .icon { font-size: 48px; margin-bottom: 12px; }
-    .spinner {
-      width: 32px; height: 32px; border: 3px solid var(--bg2);
-      border-top-color: var(--accent); border-radius: 50%;
-      animation: spin .8s linear infinite; margin-bottom: 12px;
-    }
-    @keyframes spin { to { transform: rotate(360deg); } }
-
-    .tabs {
-      display: flex; padding: 0 16px; gap: 8px; margin: 12px 0;
-    }
-    .tab {
-      padding: 8px 16px; border-radius: 20px; border: none;
-      background: var(--bg2); color: var(--text); font-size: 14px;
-      font-weight: 500; cursor: pointer; transition: .2s;
-    }
-    .tab.active { background: var(--accent); color: var(--accent-text); }
-
-    .sessions { padding: 12px 16px; display: flex; flex-direction: column; gap: 10px; }
-    .session-card {
-      background: var(--bg2); border-radius: var(--radius);
-      padding: 14px 16px; cursor: pointer; transition: .15s;
-      box-shadow: var(--shadow);
-    }
-    .session-card:active { transform: scale(.98); opacity: .85; }
-    .session-card .title { font-weight: 600; font-size: 16px; margin-bottom: 4px; }
-    .session-card .meta { font-size: 13px; color: var(--text2); }
-    .badge {
-      display: inline-block; padding: 2px 8px; border-radius: 10px;
-      font-size: 11px; font-weight: 600; margin-left: 6px;
-    }
-    .badge-active  { background: #e8f5e9; color: #2e7d32; }
-    .badge-closed  { background: #fce4ec; color: #c62828; }
-    .badge-blind   { background: #fff3e0; color: #e65100; }
-
-    .cards-list { padding: 12px 16px; display: flex; flex-direction: column; gap: 12px; }
-    .wine-card {
-      background: var(--bg2); border-radius: var(--radius);
-      overflow: hidden; box-shadow: var(--shadow);
-    }
-    .wine-card-header {
-      padding: 14px 16px 10px; display: flex;
-      align-items: center; justify-content: space-between;
-    }
-    .wine-card-header .name { font-weight: 600; font-size: 16px; }
-    .score-badge {
-      padding: 4px 10px; border-radius: 8px;
-      font-size: 14px; font-weight: 700; min-width: 40px; text-align: center;
-    }
-    .score-1-3   { background: #ffebee; color: #c62828; }
-    .score-4-6   { background: #fff8e1; color: #f57f17; }
-    .score-7-8   { background: #e8f5e9; color: #2e7d32; }
-    .score-9-10  { background: #e8f5e9; color: #1b5e20; border: 2px solid #43a047; }
-    .score-none   { background: var(--bg); color: var(--text2); }
-
-    .wine-card-body { padding: 0 16px 14px; display: flex; flex-direction: column; gap: 8px; }
-    .field-row { display: flex; gap: 8px; }
-    .field-label {
-      font-size: 13px; font-weight: 600; color: var(--text2);
-      min-width: 110px; flex-shrink: 0;
-    }
-    .field-value { font-size: 14px; flex: 1; }
-    .field-value.defect-present { color: var(--danger); font-weight: 600; }
-    .field-value.empty { color: var(--text2); font-style: italic; }
-
-    .summary-list { padding: 12px 16px; display: flex; flex-direction: column; gap: 10px; }
-    .summary-row {
-      background: var(--bg2); border-radius: var(--radius);
-      padding: 14px 16px; box-shadow: var(--shadow);
-    }
-    .summary-row .wine-name { font-weight: 600; margin-bottom: 8px; }
-    .summary-row .bar-wrap {
-      height: 8px; background: var(--bg); border-radius: 4px; overflow: hidden; margin-bottom: 6px;
-    }
-    .summary-row .bar { height: 100%; border-radius: 4px; transition: width .6s ease; }
-    .summary-row .bar-info { display: flex; justify-content: space-between; font-size: 13px; color: var(--text2); }
-
-    .participant-block { margin-bottom: 16px; }
-    .participant-name {
-      font-weight: 600; font-size: 15px; padding: 8px 0 4px;
-      border-bottom: 1px solid rgba(0,0,0,.06); margin-bottom: 8px;
-    }
-    .participant-phone { font-size: 12px; color: var(--text2); margin-left: 8px; font-weight: 400; }
-
-    .empty { text-align: center; padding: 40px 24px; color: var(--text2); }
-    .empty .icon { font-size: 40px; margin-bottom: 8px; }
-  </style>
-</head>
-<body>
-<div id="app"></div>
-<script>
-const tg = window.Telegram && window.Telegram.WebApp;
-let state = {
-  user: null, participantId: null, isAdmin: false,
-  sessions: [], currentSession: null, tab: 'my', screen: 'loading',
-};
-const BASE = window.location.origin;
-
-async function init() {
-  if (tg) { tg.ready(); tg.expand(); }
-  render();
-  try {
-    const resp = await fetch(BASE + '/api/auth', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ initData: tg.initData }),
-    });
-    if (!resp.ok) throw new Error('Auth failed');
-    const data = await resp.json();
-    state.user = data;
-    state.participantId = data.participant_id;
-    state.isAdmin = data.is_admin;
-    state.screen = 'sessions';
-    await loadSessions();
-  } catch (e) { state.screen = 'error'; render(); }
-}
-
-async function loadSessions() {
-  state.screen = 'loading'; render();
-  try {
-    const resp = await fetch(BASE + '/api/sessions?initData=' + encodeURIComponent(tg.initData));
-    state.sessions = await resp.json();
-    state.screen = 'sessions'; render();
-  } catch (e) { state.screen = 'error'; render(); }
-}
-
-async function openSession(id) {
-  state.screen = 'loading';
-  state.currentSession = state.sessions.find(s => s.id === id);
-  state.tab = 'my'; render();
-  try {
-    await Promise.all([loadMyCards(id), state.isAdmin ? loadSummary(id) : Promise.resolve()]);
-    state.screen = 'detail'; render();
-  } catch (e) { state.screen = 'error'; render(); }
-}
-
-async function loadMyCards(sid) {
-  const resp = await fetch(BASE + '/api/sessions/' + sid + '/my-cards?participant_id=' + state.participantId + '&initData=' + encodeURIComponent(tg.initData));
-  state.myCards = await resp.json();
-}
-
-async function loadSummary(sid) {
-  const resp = await fetch(BASE + '/api/sessions/' + sid + '/summary');
-  state.summaryData = await resp.json();
-}
-
-async function loadAllCards(sid) {
-  state.screen = 'loading'; render();
-  try {
-    const resp = await fetch(BASE + '/api/sessions/' + sid + '/all-cards', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ user_id: state.user.user_id }),
-    });
-    state.allCards = await resp.json();
-    state.screen = 'detail'; render();
-  } catch (e) { state.screen = 'error'; render(); }
-}
-
-function scoreClass(s) {
-  if (s == null) return 'score-none';
-  if (s <= 3) return 'score-1-3'; if (s <= 6) return 'score-4-6';
-  if (s <= 8) return 'score-7-8'; return 'score-9-10';
-}
-function scoreLabel(s) {
-  if (s == null) return '-';
-  if (s <= 3) return s + '/10 слабо';
-  if (s <= 6) return s + '/10 нормально';
-  if (s <= 8) return s + '/10 хорошо';
-  return s + '/10 отлично';
-}
-function scoreColor(s) {
-  if (s == null) return '#ccc';
-  if (s <= 3) return '#e53935'; if (s <= 6) return '#fb8c00';
-  if (s <= 8) return '#43a047'; return '#1b5e20';
-}
-function esc(str) {
-  if (!str) return '';
-  const d = document.createElement('div'); d.textContent = str; return d.innerHTML;
-}
-function fieldVal(v) {
-  if (!v || v === '-') return '<span class="field-value empty">не указано</span>';
-  return esc(v);
-}
-
-function render() {
-  const app = document.getElementById('app');
-  switch (state.screen) {
-    case 'loading':  app.innerHTML = '<div class="center-msg"><div class="spinner"></div><span>Загрузка...</span></div>'; break;
-    case 'error':    app.innerHTML = '<div class="center-msg"><div class="icon">\u26A0\uFE0F</div><span>Не удалось загрузить данные.<br>Попробуйте позже.</span></div>'; break;
-    case 'sessions': app.innerHTML = renderSessions(); break;
-    case 'detail':  app.innerHTML = renderDetail(); break;
-  }
-}
-
-function renderSessions() {
-  if (!state.sessions.length) {
-    return '<div class="center-msg"><div class="icon">\uD83C\uDF77</div><span>Сессий пока нет</span></div>';
-  }
-  let html = '<div class="header"><h1>\uD83C\uDF77 Дегустация</h1></div><div class="sessions">';
-  for (const s of state.sessions) {
-    const st = s.is_active ? '<span class="badge badge-active">активна</span>' : '<span class="badge badge-closed">закрыта</span>';
-    const bl = s.is_blind ? '<span class="badge badge-blind">слепая</span>' : '';
-    html += '<div class="session-card" onclick="openSession(' + s.id + ')"><div class="title">' + esc(s.title) + '</div><div class="meta">' + esc(s.tasting_date) + st + bl + ' &middot; ' + s.wines_count + ' обр.</div></div>';
-  }
-  html += '</div>';
-  return html;
-}
-
-function renderDetail() {
-  const s = state.currentSession;
-  let html = '<div class="header"><button class="back-btn" onclick="backToSessions()">\u2190</button><h1>' + esc(s.title) + '</h1></div>';
-  html += '<div class="tabs">';
-  html += '<button class="tab' + (state.tab === 'my' ? ' active' : '') + '" onclick="switchTab(\'my\')">\uD83D\uDCDD Мои</button>';
-  if (state.isAdmin) {
-    html += '<button class="tab' + (state.tab === 'summary' ? ' active' : '') + '" onclick="switchTab(\'summary\')">\uD83D\uDCCA Сводка</button>';
-    html += '<button class="tab' + (state.tab === 'all' ? ' active' : '') + '" onclick="switchTab(\'all\')">\uD83D\uDCB9 Все</button>';
-  }
-  html += '</div>';
-  if (state.tab === 'my')      html += renderMyCards();
-  else if (state.tab === 'summary') html += renderSummary();
-  else if (state.tab === 'all')     html += renderAllCards();
-  return html;
-}
-
-function renderMyCards() {
-  const cards = state.myCards || [];
-  if (!cards.length) return '<div class="empty"><div class="icon">\uD83D\uDCDD</div><span>Вы ещё не заполнили ни одной карточки</span></div>';
-  let html = '<div class="cards-list">';
-  for (const c of cards) html += renderWineCard(c);
-  html += '</div>'; return html;
-}
-
-function renderWineCard(c) {
-  const isBlind = state.currentSession && state.currentSession.is_blind;
-  const name = isBlind ? 'Образец ' + c.wine_position : esc(c.wine_name);
-  const sc = scoreClass(c.score);
-  const sl = scoreLabel(c.score);
-  let html = '<div class="wine-card"><div class="wine-card-header"><span class="name">' + name + '</span><span class="score-badge ' + sc + '">' + sl + '</span></div><div class="wine-card-body">';
-  const fields = [
-    ['\uD83C\uDFA8 Цвет', c.color],
-    ['\uD83C\uDF3F Аромат', c.aroma],
-    ['\uD83E\uDD64 Вкус', c.taste],
-    ['\uD83C\uDF43 Послевкусие', c.aftertaste],
-    ['\u26A0\uFE0F Дефекты', c.defects],
-    ['\u2728 Впечатление', c.impression],
-    ['\uD83D\uDCAC Комментарий', c.comment],
-  ];
-  for (const [label, val] of fields) {
-    const dc = (label.includes('Дефекты') && val && val !== '' && val !== '-') ? ' defect-present' : '';
-    html += '<div class="field-row"><span class="field-label">' + label + '</span><span class="field-value' + dc + '">' + fieldVal(val) + '</span></div>';
-  }
-  html += '</div></div>'; return html;
-}
-
-function renderSummary() {
-  const data = state.summaryData || [];
-  if (!data.length) return '<div class="empty"><div class="icon">\uD83D\uDCCA</div><span>Карточек пока нет</span></div>';
-  let html = '<div class="summary-list">';
-  for (const s of data) {
-    const avg = parseFloat(s.avg_score) || 0;
-    const pct = Math.round(avg * 10);
-    const color = scoreColor(avg);
-    html += '<div class="summary-row"><div class="wine-name">' + esc(s.wine_name) + '</div><div class="bar-wrap"><div class="bar" style="width:' + pct + '%;background:' + color + '"></div></div><div class="bar-info"><span>' + (avg ? avg.toFixed(1) + ' / 10' : 'нет оценок') + '</span><span>' + s.card_count + ' карт.</span></div></div>';
-  }
-  html += '</div>'; return html;
-}
-
-function renderAllCards() {
-  const cards = state.allCards || [];
-  if (!cards.length) return '<div class="empty"><div class="icon">\uD83D\uDCB9</div><span>Карточек пока нет</span></div>';
-  const groups = {};
-  for (const c of cards) {
-    const key = c.participant_name || 'Аноним';
-    if (!groups[key]) groups[key] = { phone: c.participant_phone || '', cards: [] };
-    groups[key].cards.push(c);
-  }
-  let html = '<div class="cards-list">';
-  for (const [name, g] of Object.entries(groups)) {
-    html += '<div class="participant-block"><div class="participant-name">' + esc(name) + '<span class="participant-phone">' + esc(g.phone) + '</span></div>';
-    for (const c of g.cards) html += renderWineCard(c);
-    html += '</div>';
-  }
-  html += '</div>'; return html;
-}
-
-function backToSessions() {
-  state.screen = 'sessions'; state.currentSession = null;
-  state.myCards = null; state.summaryData = null; state.allCards = null;
-  render();
-}
-
-async function switchTab(tab) {
-  state.tab = tab; render();
-  const sid = state.currentSession.id;
-  if (tab === 'my' && !state.myCards) { await loadMyCards(sid); render(); }
-  else if (tab === 'summary' && !state.summaryData) { await loadSummary(sid); render(); }
-  else if (tab === 'all' && !state.allCards) { await loadAllCards(sid); }
-}
-
-init();
-</script>
-</body>
-</html>"""
 
 
 # Routers defined near dp (top of file)
@@ -495,7 +129,7 @@ async def cb_create_session_start(callback: CallbackQuery, state: FSMContext):
     )
 
 
-@admin_router.message(AdminFSM.session_title)
+@admin_router.message(AdminFSM.session_title, F.text)
 async def process_session_title(message: Message, state: FSMContext):
     if not _is_admin(message.from_user.id):
         return
@@ -507,7 +141,7 @@ async def process_session_title(message: Message, state: FSMContext):
     )
 
 
-@admin_router.message(AdminFSM.session_date)
+@admin_router.message(AdminFSM.session_date, F.text)
 async def process_session_date(message: Message, state: FSMContext):
     if not _is_admin(message.from_user.id):
         return
@@ -542,7 +176,7 @@ async def cb_set_blind(callback: CallbackQuery, state: FSMContext):
     )
 
 
-@admin_router.message(AdminFSM.wine_count)
+@admin_router.message(AdminFSM.wine_count, F.text)
 async def process_wine_count(message: Message, state: FSMContext):
     if not _is_admin(message.from_user.id):
         return
@@ -555,22 +189,28 @@ async def process_wine_count(message: Message, state: FSMContext):
         return
     await state.update_data(wine_count=count, _wine_index=1)
     await state.set_state(AdminFSM.wine_name)
-    await message.answer(f"Будет {count} образцов.\n\nВведите название образца \u21161:", reply_markup=back_kb("admin_menu"))
+    await message.answer(f"Будет {count} образцов.\n\nВведите название образца \u21161 (можно несколько через Enter):", reply_markup=back_kb("admin_menu"))
 
 
-@admin_router.message(AdminFSM.wine_name)
+@admin_router.message(AdminFSM.wine_name, F.text)
 async def process_wine_name(message: Message, state: FSMContext):
     if not _is_admin(message.from_user.id):
         return
     data = await state.get_data()
-    wine_name = message.text.strip()
     idx = data["_wine_index"]
     count = data["wine_count"]
     wines = data.get("_wines", [])
-    wines.append(wine_name)
-    if idx < count:
-        await state.update_data(_wines=wines, _wine_index=idx + 1)
-        await message.answer(f"Образец \u2116{idx}: {wine_name}\n\nВведите название образца \u2116{idx + 1}:")
+    # Поддержка нескольких названий через перенос строки
+    new_names = [n.strip() for n in message.text.strip().split("\n") if n.strip()]
+    wines.extend(new_names)
+    current_idx = idx + len(new_names) - 1
+    if current_idx < count:
+        await state.update_data(_wines=wines, _wine_index=current_idx + 1)
+        added = ", ".join(new_names)
+        await message.answer(
+            f"Добавлено: {added}\n\nВведите название образца \u2116{current_idx + 1} (можно несколько через Enter):",
+            reply_markup=back_kb("admin_menu"),
+        )
     else:
         title = data["session_title"]
         date = data["session_date"]
@@ -585,6 +225,16 @@ async def process_wine_name(message: Message, state: FSMContext):
             f"Сессия создана!{blind_tag}\n\nНазвание: {title}\nДата: {date}\nОбразцы:\n{wine_list}\n\nID сессии: {session_id}",
             reply_markup=admin_menu_kb(),
         )
+
+
+# --- Catch-all для админских FSM-состояний ---
+
+@admin_router.message(AdminFSM.session_title)
+@admin_router.message(AdminFSM.session_date)
+@admin_router.message(AdminFSM.wine_count)
+@admin_router.message(AdminFSM.wine_name)
+async def admin_wrong_type(message: Message, state: FSMContext):
+    await message.answer("Пожалуйста, отправьте текст.")
 
 
 # --- Все сессии ---
@@ -666,6 +316,16 @@ async def cb_toggle_session(callback: CallbackQuery):
 # /start — срабатывает из ЛЮБОГО FSM-состояния
 @participant_router.message(F.text == "/start")
 async def cmd_start(message: Message, state: FSMContext):
+    current = await state.get_state()
+    if current and current.state == "CardFSM:filling":
+        data = await state.get_data()
+        if not data.get("_confirm_cancel"):
+            await state.update_data(_confirm_cancel=True)
+            await message.answer(
+                "Вы заполняете карточку! Данные текущего вина будут потеряны.\n"
+                "Отправьте /start ещё раз для подтверждения."
+            )
+            return
     await state.clear()
     text = (
         "Вино и не только... Дегустация!\n\n"
@@ -713,23 +373,36 @@ async def process_phone(message: Message, state: FSMContext):
     await message.answer(f"Телефон: {phone}\n\nШаг 2: Отправьте ваше имя и фамилию.")
 
 
-@participant_router.message(ParticipantFSM.waiting_phone)
+@participant_router.message(ParticipantFSM.waiting_phone, F.text)
 async def process_phone_text(message: Message, state: FSMContext):
-    phone = message.text.strip().replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
-    if not phone.isdigit() or len(phone) < 10:
+    raw = message.text.strip().replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
+    digits = raw.lstrip("+")
+    if not digits.isdigit() or len(digits) < 10:
         await message.answer("Пожалуйста, отправьте корректный номер телефона (используйте кнопку ниже).", reply_markup=phone_request_kb())
         return
-    if phone.startswith("8"):
-        phone = "+7" + phone[1:]
-    elif not phone.startswith("+"):
-        phone = "+" + phone
+    if digits.startswith("8"):
+        phone = "+7" + digits[1:]
+    elif raw.startswith("+"):
+        phone = raw
+    else:
+        phone = "+" + digits
     # Сохраняем телефон в FSM, а не в БД
     await state.update_data(_reg_phone=phone)
     await state.set_state(ParticipantFSM.waiting_name)
     await message.answer(f"Телефон: {phone}\n\nШаг 2: Отправьте ваше имя и фамилию.")
 
 
+@participant_router.message(ParticipantFSM.waiting_phone)
+async def process_phone_wrong_type(message: Message, state: FSMContext):
+    await message.answer("Пожалуйста, отправьте номер телефона кнопкой ниже или введите его текстом.", reply_markup=phone_request_kb())
+
+
 @participant_router.message(ParticipantFSM.waiting_name)
+async def name_wrong_type(message: Message, state: FSMContext):
+    await message.answer("Пожалуйста, введите ваше имя текстом.")
+
+
+@participant_router.message(ParticipantFSM.waiting_name, F.text)
 async def process_name(message: Message, state: FSMContext):
     name = message.text.strip()
     if len(name) < 2:
@@ -837,7 +510,17 @@ async def _ask_field(msg, state: FSMContext, field_index: int):
     else:
         text = f"{header}\n\n{prompt} (или нажмите Пропустить):"
         kb = skip_field_kb()
-    await msg.edit_text(text, reply_markup=kb)
+    # Пытаемся отредактировать предыдущее сообщение бота
+    saved_msg_id = data.get("_bot_msg_id")
+    saved_chat_id = data.get("_bot_chat_id") or msg.chat.id
+    if saved_msg_id:
+        try:
+            await bot.edit_message_text(chat_id=saved_chat_id, message_id=saved_msg_id, text=text, reply_markup=kb)
+            return
+        except Exception:
+            pass
+    sent = await msg.answer(text, reply_markup=kb)
+    await state.update_data(_bot_msg_id=sent.message_id, _bot_chat_id=sent.chat.id)
 
 
 async def _start_wine(source, state: FSMContext, session_id: int, wines: list[dict], is_blind: bool, position: int):
@@ -865,6 +548,9 @@ async def cb_card_start(callback: CallbackQuery, state: FSMContext):
     await _start_wine(callback, state, session_id, wines, session["is_blind"], 1)
 
 
+_redo_pending: set[tuple] = set()
+
+
 @cards_router.callback_query(F.data.startswith("card_redo:"))
 async def cb_card_redo(callback: CallbackQuery, state: FSMContext):
     registered = await is_participant_registered(callback.from_user.id)
@@ -872,6 +558,12 @@ async def cb_card_redo(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Сначала зарегистрируйтесь!", show_alert=True)
         return
     session_id = int(callback.data.split(":")[1])
+    key = (callback.from_user.id, session_id)
+    if key not in _redo_pending:
+        _redo_pending.add(key)
+        await callback.answer("Старые карточки будут стёрты! Нажмите ещё раз для подтверждения.", show_alert=True)
+        return
+    _redo_pending.discard(key)
     session = await get_session_by_id(session_id)
     if not session or not session["is_active"]:
         await callback.answer("Сессия закрыта или не найдена.", show_alert=True)
@@ -898,7 +590,6 @@ async def process_text_field(message: Message, state: FSMContext):
     data = await state.get_data()
     fk = FIELDS[data["field_index"]][0]
     if _is_button_field(fk):
-        # Не даём продвинуться — повторяем подсказку с кнопками
         if fk == "score":
             await message.answer(f"Выберите оценку кнопками ниже.{SCORE_HINT}", reply_markup=score_kb())
         elif fk == "defects":
@@ -908,6 +599,19 @@ async def process_text_field(message: Message, state: FSMContext):
     card[fk] = message.text.strip()
     await state.update_data(card_data=card)
     await _advance(message, state)
+
+
+@cards_router.message(CardFSM.filling)
+async def card_filling_wrong_type(message: Message, state: FSMContext):
+    data = await state.get_data()
+    fk = FIELDS[data["field_index"]][0]
+    if _is_button_field(fk):
+        kb = score_kb() if fk == "score" else defects_kb()
+        prompt = "Выберите оценку" if fk == "score" else "Выберите дефект"
+    else:
+        kb = skip_field_kb()
+        prompt = "Введите текст"
+    await message.answer(f"{prompt} или нажмите кнопку ниже.", reply_markup=kb)
 
 
 @cards_router.callback_query(F.data.startswith("card_defect:"), CardFSM.filling)
@@ -946,7 +650,7 @@ async def _advance(source, state: FSMContext):
         for fk, _ in FIELDS:
             val = card.get(fk, "")
             # Пустую оценку не сохраняем — нарушает CHECK(score BETWEEN 1 AND 10)
-            if fk == "score" and (not val or val == ""):
+            if fk == "score" and not val:
                 continue
             await update_card_field(participant["id"], wine_id, fk, val if val else None)
     next_field = field_index + 1
@@ -1099,94 +803,6 @@ async def cb_admin_cards_export(callback: CallbackQuery):
 
 
 # ============================================================
-#  MINI APP API
-# ============================================================
-
-def _validate_init_data(init_data: str) -> dict | None:
-    try:
-        params = dict(parse_qs(init_data))
-        hash_value = params.pop("hash", [None])[0]
-        if not hash_value:
-            return None
-        data_check_string = "\n".join(f"{k}={v[0]}" for k, v in sorted(params.items()))
-        secret_key = hashlib.sha256(BOT_TOKEN.encode()).digest()
-        calculated_hash = hmac_module.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
-        if calculated_hash == hash_value:
-            return json.loads(params.get("user", ["{}"])[0])
-        return None
-    except Exception:
-        return None
-
-
-async def miniapp_handler(request: web.Request) -> web.Response:
-    return web.Response(text=MINIAPP_HTML, content_type="text/html")
-
-
-async def api_auth(request: web.Request) -> web.Response:
-    body = await request.json()
-    user = _validate_init_data(body.get("initData", ""))
-    if not user:
-        return web.json_response({"error": "Unauthorized"}, status=401)
-    is_admin = user.get("id") in ADMIN_IDS
-    participant = await get_or_create_participant(user["id"])
-    return web.json_response({"user_id": user["id"], "name": user.get("first_name", ""), "is_admin": is_admin, "participant_id": participant["id"]})
-
-
-async def _api_get_user(request: web.Request) -> dict | None:
-    """Извлекает user из query-параметра initData в API GET-запросах."""
-    init_data = request.query.get("initData", "")
-    if not init_data:
-        return None
-    return _validate_init_data(init_data)
-
-
-async def api_sessions(request: web.Request) -> web.Response:
-    user = await _api_get_user(request)
-    if not user:
-        return web.json_response({"error": "Unauthorized"}, status=401)
-    sessions = await get_all_sessions()
-    for s in sessions:
-        wines = await get_wines_by_session(s["id"])
-        s["wines_count"] = len(wines)
-    return web.json_response(sessions)
-
-
-async def api_my_cards(request: web.Request) -> web.Response:
-    user = await _api_get_user(request)
-    if not user:
-        return web.json_response({"error": "Unauthorized"}, status=401)
-    session_id = int(request.match_info["session_id"])
-    participant_id = int(request.query["participant_id"])
-    # Пользователь может смотреть только свои карточки
-    participant = await get_or_create_participant(user["id"])
-    if participant["id"] != participant_id:
-        return web.json_response({"error": "Forbidden"}, status=403)
-    cards = await get_participant_cards(participant_id, session_id)
-    # Убираем чувствительные данные (tg_id) перед отправкой
-    for c in cards:
-        c.pop("tg_id", None)
-    return web.json_response(cards)
-
-
-async def api_summary(request: web.Request) -> web.Response:
-    session_id = int(request.match_info["session_id"])
-    summary = await get_session_cards_summary(session_id)
-    return web.json_response(summary)
-
-
-async def api_all_cards(request: web.Request) -> web.Response:
-    session_id = int(request.match_info["session_id"])
-    body = await request.json()
-    if body.get("user_id") not in ADMIN_IDS:
-        return web.json_response({"error": "Forbidden"}, status=403)
-    cards = await get_cards_by_session(session_id)
-    # Убираем чувствительные данные перед отправкой
-    for c in cards:
-        c.pop("tg_id", None)
-    return web.json_response(cards)
-
-
-# ============================================================
 #  LIFECYCLE + WEB SERVER
 # ============================================================
 
@@ -1306,12 +922,6 @@ app.router.add_get("/health", health_handler)
 app.router.add_get("/debug", debug_handler)
 app.router.add_get("/set-webhook", set_webhook_handler)
 app.router.add_post(WEBHOOK_PATH, webhook_handler)
-app.router.add_get("/miniapp/", miniapp_handler)
-app.router.add_post("/api/auth", api_auth)
-app.router.add_get("/api/sessions", api_sessions)
-app.router.add_get("/api/sessions/{session_id}/my-cards", api_my_cards)
-app.router.add_get("/api/sessions/{session_id}/summary", api_summary)
-app.router.add_post("/api/sessions/{session_id}/all-cards", api_all_cards)
 app.on_startup.append(on_startup)
 app.on_shutdown.append(on_shutdown)
 

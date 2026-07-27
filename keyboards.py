@@ -1,13 +1,10 @@
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
-
-from config import MINIAPP_URL
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 
 def main_menu_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="Регистрация", callback_data="reg")],
         [InlineKeyboardButton(text="Войти в сессию", callback_data="join_session")],
-        [InlineKeyboardButton(text="🔍 Просмотр", web_app=WebAppInfo(url=MINIAPP_URL))],
     ])
 
 
@@ -16,7 +13,6 @@ def admin_menu_kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="Создать сессию", callback_data="admin_create_session")],
         [InlineKeyboardButton(text="Все сессии", callback_data="admin_all_sessions")],
         [InlineKeyboardButton(text="Карточки дегустации", callback_data="admin_cards")],
-        [InlineKeyboardButton(text="🔍 Просмотр (Mini App)", web_app=WebAppInfo(url=MINIAPP_URL))],
         [InlineKeyboardButton(text="Меню участника", callback_data="to_main")],
     ])
 

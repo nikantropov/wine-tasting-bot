@@ -20,10 +20,6 @@ WEBHOOK_HOST = os.getenv("WEBHOOK_HOST", "https://wine-tasting-bot.onrender.com"
 WEBHOOK_PATH = os.getenv("WEBHOOK_PATH", "/webhook")
 WEBHOOK_URL = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
 
-# ====== MINI APP ======
-MINIAPP_URL = os.getenv("MINIAPP_URL", f"{WEBHOOK_HOST}/miniapp/")
-
-# ====== PATHS ======
 BASE_DIR = Path(__file__).resolve().parent
 EXPORT_DIR = BASE_DIR / "exports"
 EXPORT_DIR.mkdir(exist_ok=True)
